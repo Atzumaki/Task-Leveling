@@ -1,7 +1,13 @@
+import sqlite3
+from datetime import datetime, timedelta
+from pathlib import Path
+import sys
 from PyQt5.QtWidgets import QWidget, QHeaderView, QSizePolicy, QStyledItemDelegate, QStyleOptionViewItem, QStyle, \
-    QAbstractItemDelegate, QApplication, QTextEdit, QPushButton, QCheckBox, QHBoxLayout
+    QAbstractItemDelegate, QApplication, QTextEdit, QPushButton, QCheckBox, QHBoxLayout, QVBoxLayout, QMessageBox, \
+    QAbstractItemView
 from PyQt5.QtCore import QTimer, Qt, QSize, QRectF
-from PyQt5.QtGui import QPainter, QPen, QColor, QTextDocument, QAbstractTextDocumentLayout, QTextOption, QCursor
+from PyQt5.QtGui import QPainter, QPen, QColor, QTextDocument, QAbstractTextDocumentLayout, QTextOption, QCursor, \
+    QPalette, QKeySequence
 import math
 from PyQt5.QtWidgets import QTableWidget, QTableWidgetItem
 from PyQt5.uic.properties import QtGui, QtCore
@@ -43,13 +49,6 @@ class Line(QWidget):
         end_x = start_x + self.length
         end_y = start_y
         painter.drawLine(start_x, start_y, end_x, end_y)
-
-
-from PyQt5.QtWidgets import (
-    QTableWidget, QTableWidgetItem, QHeaderView, QHBoxLayout, QPushButton, QSizePolicy, QStyledItemDelegate, QTextEdit, QWidget
-)
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor
 
 
 class WordWrapTextEdit(QTextEdit):
@@ -108,6 +107,11 @@ class WordWrapDelegate(QStyledItemDelegate):
 
         painter.save()
 
+        # Если ячейка выделена - заливаем фон
+        if options.state & QStyle.State_Selected:
+            painter.fillRect(option.rect, option.palette.highlight())
+
+        # Рисуем текст
         doc = QTextDocument()
         doc.setHtml(f"<span style='color:#0078D7;'>{options.text}</span>")
         doc.setTextWidth(option.rect.width())
@@ -118,6 +122,11 @@ class WordWrapDelegate(QStyledItemDelegate):
         painter.setClipRect(clip)
 
         ctx = QAbstractTextDocumentLayout.PaintContext()
+
+        # Если ячейка выделена — меняем цвет текста на цвет текста выделения
+        if options.state & QStyle.State_Selected:
+            ctx.palette.setColor(QPalette.Text, option.palette.highlightedText().color())
+
         ctx.clip = clip
         doc.documentLayout().draw(painter, ctx)
 
@@ -162,6 +171,8 @@ class TaskTable(QTableWidget):
         header.setSectionResizeMode(QHeaderView.Stretch)
 
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.setSelectionBehavior(QAbstractItemView.SelectItems)
         self.setStyleSheet("""
             QHeaderView::section {
                 background-color: #0078D7;
@@ -173,6 +184,8 @@ class TaskTable(QTableWidget):
             QTableWidget {
                 gridline-color: #0078D7;
                 font-size: 14px;
+                selection-background-color: #3399FF;  /* добавлено: яркий фон выделения */
+                selection-color: white;                /* добавлено: текст внутри выделения */
             }
             QTableWidget QTableCornerButton::section {
                 background-color: #0078D7;
@@ -186,9 +199,8 @@ class TaskTable(QTableWidget):
 
         self.fill_empty_cells()
 
-        # Устанавливаем делегаты для ячеек
         for col in range(self.columnCount()):
-            if col != 4:
+            if col != 4 and col != 5 and col != 10:
                 delegate = WordWrapDelegate(self)
                 self.setItemDelegateForColumn(col, delegate)
 
@@ -221,8 +233,46 @@ class TaskTable(QTableWidget):
         add_btn.clicked.connect(lambda: self.add_row_below(row, w))
         del_btn.clicked.connect(lambda: self.delete_row(row, w))
 
+    def create_done_checkbox(self, row, col):
+        checkbox = QCheckBox()
+        checkbox.setStyleSheet("""
+            QCheckBox {
+                spacing: 5px;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+            }
+            QCheckBox::indicator:unchecked {
+                background-color: #ffffff;
+                border: 2px solid #0078D7;
+                border-radius: 3px;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #0078D7;
+                border: 2px solid #0078D7;
+                border-radius: 3px;
+            }
+        """)
+        checkbox.setMinimumSize(30, 30)
+        checkbox.setMaximumSize(30, 30)
+
+        if col == 10:  # Для колонки "Перенести"
+            checkbox.stateChanged.connect(lambda state, r=row: self.transfer_task(r, state))
+
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.addWidget(checkbox)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setAlignment(Qt.AlignCenter)
+        container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        return container
+
+
     def create_timer_button(self, row, col):
         button = QPushButton("Старт")
+        button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Вот это ключ
         button.setStyleSheet("""
             QPushButton {
                 background-color: #0078D7;
@@ -244,11 +294,12 @@ class TaskTable(QTableWidget):
         layout.addWidget(button)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setAlignment(Qt.AlignCenter)
+        container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # И контейнеру тоже
 
         return container
 
     def start_timer_for_row(self, row, column):
-        self.timer_window = CircularTimer(self, row, column)
+        self.timer_window = CircularTimer(row=row, table=self)
         self.timer_window.show()
 
     def add_row_below(self, row, parent):
@@ -256,6 +307,8 @@ class TaskTable(QTableWidget):
         for col in range(self.columnCount()):
             if col == 4:
                 self.setCellWidget(row + 1, col, self.create_timer_button(row + 1, col))
+            elif col == 5:
+                self.setCellWidget(row + 1, col, self.create_done_checkbox(row + 1, col))
             else:
                 item = QTableWidgetItem("")
                 item.setFlags(item.flags() | Qt.ItemIsEditable)
@@ -267,6 +320,8 @@ class TaskTable(QTableWidget):
         for col in range(self.columnCount()):
             if col == 4:
                 self.setCellWidget(row, col, self.create_timer_button(row, col))
+            elif col == 5:
+                self.setCellWidget(row, col, self.create_done_checkbox(row, col))
             else:
                 item = QTableWidgetItem("")
                 item.setFlags(item.flags() | Qt.ItemIsEditable)
@@ -286,3 +341,32 @@ class TaskTable(QTableWidget):
     def fill_empty_cells(self):
         for row in range(self.rowCount()):
             self.fill_row(row)
+
+    def keyPressEvent(self, event):
+        # Перехват Ctrl+C
+        if event.matches(QKeySequence.Copy):
+            self.copy_selection()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+    def copy_selection(self):
+        selected_ranges = self.selectedRanges()
+        if not selected_ranges:
+            return
+
+        copied_text = ""
+        for selected_range in selected_ranges:
+            for row in range(selected_range.topRow(), selected_range.bottomRow() + 1):
+                row_data = []
+                for col in range(selected_range.leftColumn(), selected_range.rightColumn() + 1):
+                    item = self.item(row, col)
+                    row_data.append(item.text() if item else "")
+                copied_text += '\t'.join(row_data) + '\n'
+
+        clipboard = QApplication.clipboard()
+        clipboard.setText(copied_text)
+
+        # После копирования: принудительно выйти из режима редактирования
+        self.clearFocus()
+        self.setFocus()

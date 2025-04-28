@@ -7,5 +7,12 @@ from PyQt5.QtWidgets import QApplication
 if __name__ == '__main__':
     init_db()
     app = QApplication(sys.argv)
-    central = Central(pyautogui.size(), color="#081436")
-    sys.exit(app.exec_())
+
+    try:
+        screen_size = pyautogui.size()
+        central = Central(size=screen_size, color="#081436")
+        app.setQuitOnLastWindowClosed(True)
+        sys.exit(app.exec_())
+    except Exception as e:
+        print(f"Ошибка при запуске приложения: {e}")
+        sys.exit(1)

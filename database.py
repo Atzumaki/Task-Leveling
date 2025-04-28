@@ -1,11 +1,15 @@
-import sqlite3
+from datetime import timedelta, datetime
 from pathlib import Path
-
+import sqlite3
+import sys
 from PyQt5.QtCore import Qt
 
-db_path = Path.home() / ".task_table_app"
-db_path.mkdir(exist_ok=True)
-DB_FILE = db_path / "tasks.db"
+if getattr(sys, 'frozen', False):
+    application_path = Path(sys.executable).parent
+else:
+    application_path = Path(__file__).parent
+
+DB_FILE = application_path / "tasks.db"
 
 #TODO Пофиксить SQL иньекции
 def init_db():
@@ -57,4 +61,39 @@ def load_table_data(table, date_str):
         item.setTextAlignment(Qt.AlignTop | Qt.AlignLeft)
         table.setItem(row, col, item)
 
+    conn.close()
+
+def transfer_unfinished_tasks(date_str):
+    """Переносит невыполненные задачи на следующий день"""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    # Получаем все задачи за дату
+    cursor.execute("""
+        SELECT row, column, content FROM tasks WHERE date = ?
+    """, (date_str,))
+    tasks = cursor.fetchall()
+
+    # Определяем следующую дату
+    current_date = datetime.strptime(date_str, "%Y-%m-%d")
+    next_date = current_date + timedelta(days=1)
+    next_date_str = next_date.strftime("%Y-%m-%d")
+
+    # Находим невыполненные задачи
+    tasks_by_row = {}
+    for row, col, content in tasks:
+        if row not in tasks_by_row:
+            tasks_by_row[row] = {}
+        tasks_by_row[row][col] = content
+
+    for row, columns in tasks_by_row.items():
+        done = columns.get(5, "")  # 5-я колонка — "Сделано"
+        if done.strip().lower() not in ["1", "true", "yes", "да", "✔", "✓"]:
+            for col, content in columns.items():
+                cursor.execute("""
+                    INSERT OR REPLACE INTO tasks (date, row, column, content)
+                    VALUES (?, ?, ?, ?)
+                """, (next_date_str, row, col, content))
+
+    conn.commit()
     conn.close()
