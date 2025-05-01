@@ -5,6 +5,8 @@ import sys
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QCheckBox, QTableWidgetItem
 
+from Widgets import bag
+
 if getattr(sys, 'frozen', False):
     application_path = Path(sys.executable).parent
 else:
@@ -111,20 +113,34 @@ def transfer_unfinished_tasks(date_str):
         cursor.execute("SELECT row, column, content FROM tasks WHERE date = ?", (date_str,))
         all_tasks = cursor.fetchall()
 
-        # 3. Находим строки с выполненными задачами (checkbox = 1)
-        cursor.execute("""
-            SELECT DISTINCT row FROM tasks 
-            WHERE date = ? AND column = 5 AND content = '1'
-        """, (date_str,))
-        completed_rows = {row[0] for row in cursor.fetchall()}
+        tasks_to_transfer = {}
+        has_text_in_col0 = set()  # Строки с текстом в колонке 0
 
-        # 4. Копируем только задачи из НЕ выполненых строк
+        # Сначала собираем данные
         for row, col, content in all_tasks:
-            if row not in completed_rows:  # Если строка не содержит checkbox=1
-                cursor.execute("""
-                    INSERT INTO tasks (date, row, column, content)
-                    VALUES (?, ?, ?, ?)
-                """, (next_date_str, row, col, content))
+            if col == 0 and content.strip():  # Колонка "Сфера деятельности" с текстом
+                has_text_in_col0.add(row)
+            if row not in tasks_to_transfer:
+                tasks_to_transfer[row] = {'has_checkbox_1': False, 'tasks': []}
+            if col == 5 and content == '1':  # Чекбокс выполнен
+                tasks_to_transfer[row]['has_checkbox_1'] = True
+            tasks_to_transfer[row]['tasks'].append((col, content))
+
+        # 4. Переносим задачи, которые:
+        #    - Не имеют чекбокса=1 ИЛИ
+        #    - Имеют текст в колонке 0
+        for row, data in tasks_to_transfer.items():
+            should_transfer = (
+                    not data['has_checkbox_1'] or
+                    row in has_text_in_col0 or
+                    row in bag
+            )
+            if should_transfer:
+                for col, content in data['tasks']:
+                    cursor.execute("""
+                                INSERT INTO tasks (date, row, column, content)
+                                VALUES (?, ?, ?, ?)
+                            """, (next_date_str, row, col, content))
 
         conn.commit()
         return True
@@ -135,3 +151,33 @@ def transfer_unfinished_tasks(date_str):
         return False
     finally:
         conn.close()
+
+
+def get_time_by_categories(date):
+    """Суммирует значения content для колонок 6,7,8,9 за указанную дату"""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    # Итоговый словарь с суммами по колонкам
+    sums = {
+        'column_6': 0,  # Творческое
+        'column_7': 0,  # Умственное
+        'column_8': 0,  # Физическое
+        'column_9': 0  # Восполнение
+    }
+
+    # Для каждой колонки (6-9) получаем сумму content
+    for column in [6, 7, 8, 9]:
+        cursor.execute("""
+            SELECT SUM(CAST(content AS INTEGER))
+            FROM tasks
+            WHERE date = ? AND column = ?
+        """, (date, column))
+
+        result = cursor.fetchone()
+        if result and result[0]:
+            sums[f'column_{column}'] = result[0]
+
+    conn.close()
+    print(sums)
+    return sums

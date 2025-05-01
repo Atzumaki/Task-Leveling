@@ -19,6 +19,7 @@ else:
     application_path = Path(__file__).parent
 
 DB_FILE = application_path / "tasks.db"
+bag = set()
 
 
 class WordWrapTextEdit(QTextEdit):
@@ -179,37 +180,61 @@ class TaskTable(QTableWidget):
     def on_table_right_click(self, pos):
         index = self.indexAt(pos)
         if index.isValid():
-            row = index.row()
-            self.show_row_menu(row)
+            self.setFocus()
+            QTimer.singleShot(50, lambda: self._show_row_menu(index.row()))
 
-    def show_row_menu(self, row):
+    def _show_row_menu(self, row):
+        """Внутренний метод для отображения меню"""
+        if hasattr(self, '_context_menu') and self._context_menu.isVisible():
+            self._context_menu.close()
+
+        # Создаем меню
+        menu = QWidget(flags=Qt.Popup)
+        layout = QVBoxLayout(menu)
+        layout.setContentsMargins(5, 5, 5, 5)
+
+        # Настройка стилей
+        menu.setStyleSheet("""
+            QWidget {
+                background-color: #0A1A3F;
+                border: 1px solid #0078D7;
+                border-radius: 5px;
+            }
+            QPushButton {
+                background-color: transparent;
+                color: white;
+                font-size: 14px;
+                padding: 8px 16px;
+                border: none;
+                text-align: left;
+                min-width: 180px;
+            }
+            QPushButton:hover {
+                background-color: #0078D7;
+            }
+        """)
+
+        # Добавляем кнопки с передачей menu как parent
+        buttons = [
+            ("🔁 Повторять задачу", lambda: self.toggle_repeating_task(row, menu)),
+            ("🚫 Неповторять задачу", lambda: self.not_repeating_task(row, menu)),
+            ("➕ Добавить строку вниз", lambda: self.add_row_below(row, menu)),
+            ("❌ Удалить строку", lambda: self.delete_row(row, menu))
+        ]
+
+        for text, handler in buttons:
+            btn = QPushButton(text)
+            btn.clicked.connect(handler)
+            layout.addWidget(btn)
+
+        # Позиционирование
         global_pos = QCursor.pos()
-        w = QWidget(flags=Qt.Popup)
-        layout = QHBoxLayout(w)
-        add_btn = QPushButton("Добавить строку вниз")
-        del_btn = QPushButton("Удалить строку")
-        layout.addWidget(add_btn)
-        layout.addWidget(del_btn)
-        w.setStyleSheet("""
-              QWidget {
-                  background-color: #0A1A3F;
-              }
-              QPushButton {
-                  background-color: #0078D7;
-                  color: white;
-                  font-size: 14px;
-                  padding: 5px 10px;
-                  border: none;
-                  border-radius: 4px;
-              }
-              QPushButton:hover {
-                  background-color: #3399FF;
-              }
-          """)
-        w.move(global_pos)
-        w.show()
-        add_btn.clicked.connect(lambda: self.add_row_below(row, w))
-        del_btn.clicked.connect(lambda: self.delete_row(row, w))
+        menu.adjustSize()
+        menu.move(global_pos.x(), global_pos.y() - menu.height())
+
+        # Сохраняем ссылку и показываем
+        self._context_menu = menu
+        menu.show()
 
     def create_done_checkbox(self, row, col):
         checkbox = QCheckBox()
@@ -274,7 +299,6 @@ class TaskTable(QTableWidget):
             """, (date_str, row, 5, new_state))
             conn.commit()
 
-
     def create_timer_button(self, row, col):
         button = QPushButton("Старт")
         button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -306,6 +330,51 @@ class TaskTable(QTableWidget):
     def start_timer_for_row(self, row, column):
         self.timer_window = CircularTimer(row=row, table=self)
         self.timer_window.show()
+
+    def toggle_repeating_task(self, row, w):
+        # Добавляем эмоджи к названию задачи
+        bag.add(row)
+        item = self.item(row, 1)  # Колонка с названием задачи
+        if item:
+            text = item.text()
+            if "🔁" not in text:
+                item.setText(f"🔁 {text}")
+            else:
+                item.setText(text.replace("🔁", "").strip())
+
+                # Сохраняем в базу данных
+                date_str = self.date.toString("yyyy-MM-dd")
+                with sqlite3.connect(DB_FILE) as conn:
+                    cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT OR REPLACE INTO tasks (date, row, column, content)
+                    VALUES (?, ?, ?, ?)
+                """, (date_str, row, 1, item.text()))
+                conn.commit()
+
+                w.close()
+
+    def not_repeating_task(self, row, w):
+        if row in bag:
+            bag.remove(row)
+        # Удаляем эмоджи из названия задачи
+        item = self.item(row, 1)  # Колонка с названием задачи
+        if item:
+            text = item.text()
+            if "🔁" in text:
+                item.setText(text.replace("🔁", "").strip())
+
+                # Сохраняем в базу данных
+                date_str = self.date.toString("yyyy-MM-dd")
+                with sqlite3.connect(DB_FILE) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO tasks (date, row, column, content)
+                        VALUES (?, ?, ?, ?)
+                    """, (date_str, row, 1, item.text()))
+                    conn.commit()
+
+        w.close()
 
     def add_row_below(self, row, parent):
         date_str = self.date.toString("yyyy-MM-dd")
@@ -372,3 +441,9 @@ class TaskTable(QTableWidget):
     def fill_empty_cells(self):
         for row in range(self.rowCount()):
             self.fill_row(row)
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT row FROM tasks WHERE date = ? AND column = 1 AND content LIKE '%🔁%'",
+                           (self.date.toString("yyyy-MM-dd"),))
+            repeating_rows = {row[0] for row in cursor.fetchall()}
+            bag.update(repeating_rows)
