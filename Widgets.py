@@ -1,5 +1,4 @@
 import sqlite3
-from datetime import datetime, timedelta
 from pathlib import Path
 import sys
 from PyQt5.QtWidgets import QWidget, QHeaderView, QSizePolicy, QStyledItemDelegate, QStyleOptionViewItem, QStyle, \
@@ -14,41 +13,12 @@ from PyQt5.uic.properties import QtGui, QtCore
 
 from TimerWindow import CircularTimer
 
+if getattr(sys, 'frozen', False):
+    application_path = Path(sys.executable).parent
+else:
+    application_path = Path(__file__).parent
 
-class Line(QWidget):
-    def __init__(self, width, length, color, isshine, parent=None):
-        super().__init__(parent)
-
-        self.width = width
-        self.length = length
-        self.color = color
-        self.current_color = QColor(0, 0, 0)
-        self.isshine = isshine
-        self.time = 0
-
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.update_line)
-        self.timer.start(16)
-
-    def update_line(self):
-        if self.isshine:
-            self.time += 0.02
-            variation = int((math.sin(self.time) * 50) + 105)
-            r = 0
-            g = max(0, min(255, variation))
-            b = max(0, min(255, variation + 100))
-            self.current_color = QColor(r, g, b)
-        self.update()
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        pen = QPen(self.current_color)
-        pen.setWidth(self.width)
-        painter.setPen(pen)
-        start_x, start_y = self.coord
-        end_x = start_x + self.length
-        end_y = start_y
-        painter.drawLine(start_x, start_y, end_x, end_y)
+DB_FILE = application_path / "tasks.db"
 
 
 class WordWrapTextEdit(QTextEdit):
@@ -146,9 +116,11 @@ class WordWrapDelegate(QStyledItemDelegate):
 
 
 class TaskTable(QTableWidget):
-    def __init__(self, size, parent=None):
+    def __init__(self, size, date, parent=None):
         super().__init__(parent)
         self.size = size
+        self.date = date
+        self.is_loading_data = False
 
         headers = [
             "Сфера деятельности",
@@ -195,14 +167,20 @@ class TaskTable(QTableWidget):
 
         self.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.cellChanged.connect(self.check_last_row_input)
-        self.verticalHeader().sectionClicked.connect(self.show_row_menu)
-
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.on_table_right_click)
         self.fill_empty_cells()
 
         for col in range(self.columnCount()):
-            if col != 4 and col != 5 and col != 10:
+            if col != 4 and col != 5:
                 delegate = WordWrapDelegate(self)
                 self.setItemDelegateForColumn(col, delegate)
+
+    def on_table_right_click(self, pos):
+        index = self.indexAt(pos)
+        if index.isValid():
+            row = index.row()
+            self.show_row_menu(row)
 
     def show_row_menu(self, row):
         global_pos = QCursor.pos()
@@ -256,9 +234,10 @@ class TaskTable(QTableWidget):
         """)
         checkbox.setMinimumSize(30, 30)
         checkbox.setMaximumSize(30, 30)
-
-        if col == 10:  # Для колонки "Перенести"
-            checkbox.stateChanged.connect(lambda state, r=row: self.transfer_task(r, state))
+        self.update_checkbox_state(checkbox, row)
+        checkbox.stateChanged.connect(
+            lambda state, r=row, cb=checkbox: self.on_checkbox_changed(r, cb)
+        )
 
         container = QWidget()
         layout = QHBoxLayout(container)
@@ -269,10 +248,36 @@ class TaskTable(QTableWidget):
 
         return container
 
+    def update_checkbox_state(self, checkbox, row):
+        date_str = self.date.toString("yyyy-MM-dd")
+
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT content FROM tasks 
+                WHERE date = ? AND row = ? AND column = 5
+            """, (date_str, row))
+
+            result = cursor.fetchone()
+            is_checked = str(result[0]).strip() == "1" if result else False
+            checkbox.setChecked(is_checked)
+
+    def on_checkbox_changed(self, row, checkbox):
+        date_str = self.date.toString("yyyy-MM-dd")
+        new_state = "1" if checkbox.isChecked() else "0"
+
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO tasks (date, row, column, content)
+                VALUES (?, ?, ?, ?)
+            """, (date_str, row, 5, new_state))
+            conn.commit()
+
 
     def create_timer_button(self, row, col):
         button = QPushButton("Старт")
-        button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Вот это ключ
+        button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         button.setStyleSheet("""
             QPushButton {
                 background-color: #0078D7;
@@ -303,70 +308,67 @@ class TaskTable(QTableWidget):
         self.timer_window.show()
 
     def add_row_below(self, row, parent):
+        date_str = self.date.toString("yyyy-MM-dd")
+        with sqlite3.connect(DB_FILE) as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE tasks
+                SET row = row + 1
+                WHERE date = ? AND row > ?
+            """, (date_str, row))
+            conn.commit()
         self.insertRow(row + 1)
-        for col in range(self.columnCount()):
-            if col == 4:
-                self.setCellWidget(row + 1, col, self.create_timer_button(row + 1, col))
-            elif col == 5:
-                self.setCellWidget(row + 1, col, self.create_done_checkbox(row + 1, col))
-            else:
-                item = QTableWidgetItem("")
-                item.setFlags(item.flags() | Qt.ItemIsEditable)
-                item.setTextAlignment(Qt.AlignTop | Qt.AlignLeft)
-                self.setItem(row + 1, col, item)
+        self.fill_row(row + 1)
+
         parent.close()
 
     def fill_row(self, row):
+        """Заполняет строку виджетами и пустыми ячейками"""
         for col in range(self.columnCount()):
-            if col == 4:
-                self.setCellWidget(row, col, self.create_timer_button(row, col))
-            elif col == 5:
-                self.setCellWidget(row, col, self.create_done_checkbox(row, col))
+            if col == 4:  # Колонка с таймером
+                # Создаем кнопку таймера только если ее еще нет
+                if not self.cellWidget(row, col):
+                    self.setCellWidget(row, col, self.create_timer_button(row, col))
+            elif col == 5:  # Колонка с чекбоксом
+                # Создаем чекбокс только если его еще нет
+                if not self.cellWidget(row, col):
+                    self.setCellWidget(row, col, self.create_done_checkbox(row, col))
             else:
-                item = QTableWidgetItem("")
-                item.setFlags(item.flags() | Qt.ItemIsEditable)
-                item.setTextAlignment(Qt.AlignTop | Qt.AlignLeft)
-                self.setItem(row, col, item)
+                # Для текстовых ячеек - создаем только если ячейка пустая
+                if not self.item(row, col):
+                    item = QTableWidgetItem("")
+                    item.setFlags(item.flags() | Qt.ItemIsEditable)
+                    item.setTextAlignment(Qt.AlignTop | Qt.AlignLeft)
+                    self.setItem(row, col, item)
 
     def delete_row(self, row, parent):
-        if self.rowCount() > 1:
-            self.removeRow(row)
+        if self.rowCount() <= 1:
+            parent.close()
+            return
+
+        date_str = self.date.toString("yyyy-MM-dd")
+        with sqlite3.connect(DB_FILE) as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                DELETE FROM tasks
+                WHERE date = ? AND row = ?
+            """, (date_str, row))
+            cur.execute("""
+                UPDATE tasks
+                SET row = row - 1
+                WHERE date = ? AND row > ?
+            """, (date_str, row))
+            conn.commit()
+        self.removeRow(row)
         parent.close()
 
     def check_last_row_input(self, row, col):
-        if row == self.rowCount() - 1 and self.item(row, col).text().strip():
-            self.insertRow(self.rowCount())
-            self.fill_row(self.rowCount() - 1)
+        if row == self.rowCount() - 1:
+            item = self.item(row, col)
+            if item and item.text().strip() and not self.is_loading_data:
+                self.insertRow(self.rowCount())
+                self.fill_row(self.rowCount() - 1)
 
     def fill_empty_cells(self):
         for row in range(self.rowCount()):
             self.fill_row(row)
-
-    def keyPressEvent(self, event):
-        # Перехват Ctrl+C
-        if event.matches(QKeySequence.Copy):
-            self.copy_selection()
-            event.accept()
-        else:
-            super().keyPressEvent(event)
-
-    def copy_selection(self):
-        selected_ranges = self.selectedRanges()
-        if not selected_ranges:
-            return
-
-        copied_text = ""
-        for selected_range in selected_ranges:
-            for row in range(selected_range.topRow(), selected_range.bottomRow() + 1):
-                row_data = []
-                for col in range(selected_range.leftColumn(), selected_range.rightColumn() + 1):
-                    item = self.item(row, col)
-                    row_data.append(item.text() if item else "")
-                copied_text += '\t'.join(row_data) + '\n'
-
-        clipboard = QApplication.clipboard()
-        clipboard.setText(copied_text)
-
-        # После копирования: принудительно выйти из режима редактирования
-        self.clearFocus()
-        self.setFocus()

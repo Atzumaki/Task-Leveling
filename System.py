@@ -69,8 +69,13 @@ class Central(QObject):
         layout.addWidget(self.calendar, alignment=Qt.AlignCenter)
         self.window.setLayout(layout)
         self.window.show()
+        self.date = None
 
-    def show_time_table(self, date):
+    def show_time_table(self, date=""):
+        if date == "":
+            date = self.date
+        else:
+            self.date = date
         """Показать таблицу задач для выбранной даты"""
         self.table_wind = QWidget()
         self.table_wind.installEventFilter(self)
@@ -94,7 +99,7 @@ class Central(QObject):
                 background-color: #005bb5;
             }
         """)
-        back_button.clicked.connect(self.table_wind.close)
+        back_button.clicked.connect(self.close_table)
 
         transfer_button = QPushButton("Перенести задачи ➡️")
         transfer_button.setFixedSize(180, 40)
@@ -137,43 +142,49 @@ class Central(QObject):
         label.setAlignment(Qt.AlignCenter)
         layout.addWidget(label)
 
-        table = TaskTable(self.size)
+        table = TaskTable(self.size, self.date)
         load_table_data(table, date_str)
         layout.addWidget(table)
 
         self.table_wind.setLayout(layout)
         self.table_wind.show()
 
+    def close_table(self):
+        selected_date = self.calendar.selectedDate().toString("yyyy-MM-dd")
+        table = self.table_wind.findChild(TaskTable)
+        if table:
+            save_table_data(table, selected_date)
+        self.table_wind.close()
+
     def clear_table(self):
-        """Очистить данные в таблице и базе данных (оставляя названия колонок)"""
+        """Очистить таблицу, оставляя только одну пустую строку"""
         reply = QMessageBox.question(self.table_wind, 'Подтверждение очистки',
-                                     "Вы уверены, что хотите очистить таблицу задач?",
+                                     "Вы уверены, что хотите полностью очистить таблицу задач?\n"
+                                     "Все строки будут удалены, останется только одна пустая строка.",
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
 
         if reply == QMessageBox.Yes:
-            # Очистить данные в таблице
             table = self.table_wind.findChild(TaskTable)
             if table:
-                # Сохраняем количество строк и колонок
-                row_count = table.rowCount()
-                column_count = table.columnCount()
-
-                # Очищаем все данные
-                table.clearContents()
-
-                # Восстанавливаем структуру таблицы
-                table.setRowCount(row_count)
-                table.setColumnCount(column_count)
-
-                # Заполняем пустые ячейки
-                table.fill_empty_cells()
+                # Сохраняем дату для обновления
+                selected_date = self.calendar.selectedDate().toString("yyyy-MM-dd")
 
                 # Очищаем данные в базе данных
-                selected_date = self.calendar.selectedDate().toString("yyyy-MM-dd")
                 self.clear_data_from_db(selected_date)
 
+                # Полностью очищаем таблицу
+                table.setRowCount(0)  # Удаляем все строки
+
+                # Добавляем одну пустую строку
+                table.setRowCount(1)
+                table.fill_empty_cells()
+
+                # Закрываем и заново открываем таблицу для обновления
+                self.close_table()
+                self.show_time_table(self.calendar.selectedDate())
+
                 QMessageBox.information(self.table_wind, 'Таблица очищена',
-                                        'Таблица задач была очищена!')
+                                        'Все строки удалены, оставлена одна пустая строка!')
 
     def clear_data_from_db(self, date_str):
         """Очистить данные таблицы в базе данных по указанной дате"""
@@ -186,21 +197,47 @@ class Central(QObject):
         conn.close()
 
     def transfer_tasks(self):
-        """Show confirmation dialog before transferring tasks inside the table window."""
-        # Get the selected date
+        """Перенос задач на следующий день (без удаления из исходной таблицы)"""
         selected_date = self.calendar.selectedDate().toString("yyyy-MM-dd")
 
-        # Create the confirmation dialog
-        reply = QMessageBox.question(self.table_wind, 'Подтверждение переноса',
-                                     f"Вы уверены, что хотите перенести задачи для {selected_date}?",
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        reply = QMessageBox.question(
+            self.table_wind,
+            'Подтверждение переноса',
+            f"Перенести невыполненные задачи с {selected_date} на следующий день?\n"
+            "Задачи останутся в исходной таблице.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
 
         if reply == QMessageBox.Yes:
-            # Proceed with the task transfer
-            from database import transfer_unfinished_tasks
-            transfer_unfinished_tasks(selected_date)
-            # Show success message after transfer
-            QMessageBox.information(self.table_wind, 'Задачи перенесены', 'Задачи успешно перенесены!')
+            try:
+                # Сохраняем текущие данные перед переносом
+                table = self.table_wind.findChild(TaskTable)
+                if table:
+                    save_table_data(table, selected_date)
+
+                # Выполняем перенос (без удаления)
+                from database import transfer_unfinished_tasks
+                if transfer_unfinished_tasks(selected_date):
+
+                    QMessageBox.information(
+                        self.table_wind,
+                        'Успех',
+                        'Задачи успешно скопированы на следующий день!'
+                    )
+                else:
+                    QMessageBox.warning(
+                        self.table_wind,
+                        'Ошибка',
+                        'Ошибка при переносе задач!'
+                    )
+
+            except Exception as e:
+                QMessageBox.critical(
+                    self.table_wind,
+                    'Ошибка',
+                    f'Произошла ошибка: {str(e)}'
+                )
 
     def eventFilter(self, obj, event):
         """Обработка событий клавиатуры"""
@@ -208,12 +245,10 @@ class Central(QObject):
             if obj == self.window:
                 self.window.close()
             elif obj == self.table_wind:
-                if self.table_wind:  # Если открыта таблица
+                if self.table_wind:
                     table = self.table_wind.findChild(TaskTable)
                     if table:
-                        from database import save_table_data
-                        selected_date = self.calendar.selectedDate().toString("yyyy-MM-dd")
-                        save_table_data(table, selected_date)
-                self.table_wind.close()
+                        self.close_table()
             return True
         return super().eventFilter(obj, event)
+
