@@ -101,34 +101,27 @@ def transfer_unfinished_tasks(date_str):
     cursor = conn.cursor()
 
     try:
-        # Получаем даты
         current_date = datetime.strptime(date_str, "%Y-%m-%d")
         next_date = current_date + timedelta(days=1)
         next_date_str = next_date.strftime("%Y-%m-%d")
 
-        # 1. Удаляем ВСЕ существующие задачи следующего дня
         cursor.execute("DELETE FROM tasks WHERE date = ?", (next_date_str,))
 
-        # 2. Находим ВСЕ задачи текущего дня
         cursor.execute("SELECT row, column, content FROM tasks WHERE date = ?", (date_str,))
         all_tasks = cursor.fetchall()
 
         tasks_to_transfer = {}
-        has_text_in_col0 = set()  # Строки с текстом в колонке 0
+        has_text_in_col0 = set()
 
-        # Сначала собираем данные
         for row, col, content in all_tasks:
-            if col == 0 and content.strip():  # Колонка "Сфера деятельности" с текстом
-                has_text_in_col0.add(row)
+            if col == 0 and content.strip():
+                if not content.strip().isdigit():
+                    has_text_in_col0.add(row)
             if row not in tasks_to_transfer:
                 tasks_to_transfer[row] = {'has_checkbox_1': False, 'tasks': []}
-            if col == 5 and content == '1':  # Чекбокс выполнен
+            if col == 5 and content == '1':
                 tasks_to_transfer[row]['has_checkbox_1'] = True
             tasks_to_transfer[row]['tasks'].append((col, content))
-
-        # 4. Переносим задачи, которые:
-        #    - Не имеют чекбокса=1 ИЛИ
-        #    - Имеют текст в колонке 0
         for row, data in tasks_to_transfer.items():
             should_transfer = (
                     not data['has_checkbox_1'] or
@@ -154,11 +147,9 @@ def transfer_unfinished_tasks(date_str):
 
 
 def get_time_by_categories(date):
-    """Суммирует значения content для колонок 6,7,8,9 за указанную дату"""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
-    # Итоговый словарь с суммами по колонкам
     sums = {
         'column_6': 0,  # Творческое
         'column_7': 0,  # Умственное
@@ -166,7 +157,6 @@ def get_time_by_categories(date):
         'column_9': 0  # Восполнение
     }
 
-    # Для каждой колонки (6-9) получаем сумму content
     for column in [6, 7, 8, 9]:
         cursor.execute("""
             SELECT SUM(CAST(content AS INTEGER))
@@ -179,5 +169,4 @@ def get_time_by_categories(date):
             sums[f'column_{column}'] = result[0]
 
     conn.close()
-    print(sums)
     return sums

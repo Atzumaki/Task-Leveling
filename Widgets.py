@@ -78,11 +78,9 @@ class WordWrapDelegate(QStyledItemDelegate):
 
         painter.save()
 
-        # Если ячейка выделена - заливаем фон
         if options.state & QStyle.State_Selected:
             painter.fillRect(option.rect, option.palette.highlight())
 
-        # Рисуем текст
         doc = QTextDocument()
         doc.setHtml(f"<span style='color:#0078D7;'>{options.text}</span>")
         doc.setTextWidth(option.rect.width())
@@ -94,7 +92,6 @@ class WordWrapDelegate(QStyledItemDelegate):
 
         ctx = QAbstractTextDocumentLayout.PaintContext()
 
-        # Если ячейка выделена — меняем цвет текста на цвет текста выделения
         if options.state & QStyle.State_Selected:
             ctx.palette.setColor(QPalette.Text, option.palette.highlightedText().color())
 
@@ -184,16 +181,13 @@ class TaskTable(QTableWidget):
             QTimer.singleShot(50, lambda: self._show_row_menu(index.row()))
 
     def _show_row_menu(self, row):
-        """Внутренний метод для отображения меню"""
         if hasattr(self, '_context_menu') and self._context_menu.isVisible():
             self._context_menu.close()
 
-        # Создаем меню
         menu = QWidget(flags=Qt.Popup)
         layout = QVBoxLayout(menu)
         layout.setContentsMargins(5, 5, 5, 5)
 
-        # Настройка стилей
         menu.setStyleSheet("""
             QWidget {
                 background-color: #0A1A3F;
@@ -214,7 +208,7 @@ class TaskTable(QTableWidget):
             }
         """)
 
-        # Добавляем кнопки с передачей menu как parent
+
         buttons = [
             ("🔁 Повторять задачу", lambda: self.toggle_repeating_task(row, menu)),
             ("🚫 Неповторять задачу", lambda: self.not_repeating_task(row, menu)),
@@ -227,12 +221,10 @@ class TaskTable(QTableWidget):
             btn.clicked.connect(handler)
             layout.addWidget(btn)
 
-        # Позиционирование
         global_pos = QCursor.pos()
         menu.adjustSize()
         menu.move(global_pos.x(), global_pos.y() - menu.height())
 
-        # Сохраняем ссылку и показываем
         self._context_menu = menu
         menu.show()
 
@@ -323,7 +315,7 @@ class TaskTable(QTableWidget):
         layout.addWidget(button)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setAlignment(Qt.AlignCenter)
-        container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # И контейнеру тоже
+        container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         return container
 
@@ -332,9 +324,8 @@ class TaskTable(QTableWidget):
         self.timer_window.show()
 
     def toggle_repeating_task(self, row, w):
-        # Добавляем эмоджи к названию задачи
         bag.add(row)
-        item = self.item(row, 1)  # Колонка с названием задачи
+        item = self.item(row, 1)
         if item:
             text = item.text()
             if "🔁" not in text:
@@ -342,7 +333,6 @@ class TaskTable(QTableWidget):
             else:
                 item.setText(text.replace("🔁", "").strip())
 
-                # Сохраняем в базу данных
                 date_str = self.date.toString("yyyy-MM-dd")
                 with sqlite3.connect(DB_FILE) as conn:
                     cursor = conn.cursor()
@@ -357,14 +347,12 @@ class TaskTable(QTableWidget):
     def not_repeating_task(self, row, w):
         if row in bag:
             bag.remove(row)
-        # Удаляем эмоджи из названия задачи
-        item = self.item(row, 1)  # Колонка с названием задачи
+        item = self.item(row, 1)
         if item:
             text = item.text()
             if "🔁" in text:
                 item.setText(text.replace("🔁", "").strip())
 
-                # Сохраняем в базу данных
                 date_str = self.date.toString("yyyy-MM-dd")
                 with sqlite3.connect(DB_FILE) as conn:
                     cursor = conn.cursor()
@@ -392,18 +380,14 @@ class TaskTable(QTableWidget):
         parent.close()
 
     def fill_row(self, row):
-        """Заполняет строку виджетами и пустыми ячейками"""
         for col in range(self.columnCount()):
-            if col == 4:  # Колонка с таймером
-                # Создаем кнопку таймера только если ее еще нет
+            if col == 4:
                 if not self.cellWidget(row, col):
                     self.setCellWidget(row, col, self.create_timer_button(row, col))
-            elif col == 5:  # Колонка с чекбоксом
-                # Создаем чекбокс только если его еще нет
+            elif col == 5:
                 if not self.cellWidget(row, col):
                     self.setCellWidget(row, col, self.create_done_checkbox(row, col))
             else:
-                # Для текстовых ячеек - создаем только если ячейка пустая
                 if not self.item(row, col):
                     item = QTableWidgetItem("")
                     item.setFlags(item.flags() | Qt.ItemIsEditable)

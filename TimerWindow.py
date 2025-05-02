@@ -13,7 +13,7 @@ class CircularTimer(QWidget):
         self.row = row
         self.table = table
 
-        self.max_time = 30  # TODO загрузить в константы
+        self.max_time = 30
         self.current_time = 0
 
         self.init_ui()
@@ -23,7 +23,6 @@ class CircularTimer(QWidget):
         self.timer.setInterval(1000)
 
     def init_ui(self):
-        """Инициализация интерфейса"""
         self.setStyleSheet("""
             background-color: #0A1A3F;
             color: white;
@@ -33,7 +32,6 @@ class CircularTimer(QWidget):
         main_layout.setContentsMargins(30, 30, 30, 30)
         main_layout.setSpacing(20)
 
-        # Кнопка завершения на верхней левой части
         self.finish_btn = QPushButton("Завершить")
         self.finish_btn.setStyleSheet("""
             QPushButton {
@@ -53,7 +51,6 @@ class CircularTimer(QWidget):
         self.finish_btn.setFixedHeight(40)
         self.finish_btn.clicked.connect(self.stop_timer)
 
-        # Лейаут для кнопок
         btn_layout = QHBoxLayout()
         btn_layout.addStretch(1)
 
@@ -78,7 +75,6 @@ class CircularTimer(QWidget):
             }
         """
 
-        # Применяем стиль ко всем кнопкам
         for btn in [self.start_btn, self.pause_btn, self.reset_btn]:
             btn.setStyleSheet(btn_style)
             btn.setFixedHeight(40)
@@ -89,17 +85,13 @@ class CircularTimer(QWidget):
         self.pause_btn.clicked.connect(self.pause_timer)
         self.reset_btn.clicked.connect(self.reset_timer)
 
-        # Добавляем кнопки в основной лейаут
-        main_layout.addWidget(self.finish_btn, alignment=Qt.AlignTop | Qt.AlignLeft)  # Переместили сюда кнопку "Завершить"
-        main_layout.addStretch(1)  # Оставляем пространство после кнопки
-
-        # Таймер
+        main_layout.addWidget(self.finish_btn, alignment=Qt.AlignTop | Qt.AlignLeft)
+        main_layout.addStretch(1)
         self.time_label = QLabel("00:00:00")
         self.time_label.setFont(QFont("Arial", 28, QFont.Bold))
         self.time_label.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(self.time_label)
 
-        # Лейаут для остальных кнопок
         btn_layout.addWidget(self.start_btn)
         btn_layout.addWidget(self.pause_btn)
         btn_layout.addWidget(self.reset_btn)
@@ -129,10 +121,8 @@ class CircularTimer(QWidget):
         if self.table and self.row is not None:
             existing_item = self.table.item(self.row, 4)
             if existing_item and existing_item.text().strip():
-                # Если пользователь уже что-то написал вручную — НЕ ПЕРЕЗАПИСЫВАЕМ
                 pass
             else:
-                # Иначе вставляем наше время
                 if self.table.cellWidget(self.row, 4):
                     self.table.removeCellWidget(self.row, 4)
 
@@ -171,7 +161,6 @@ class CircularTimer(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # Настройки окружности
         circle_diameter = 250
         x = (self.width() - circle_diameter) // 2
         y = (self.height() - circle_diameter) // 2 - 30
@@ -181,27 +170,21 @@ class CircularTimer(QWidget):
             -(self.width() - circle_diameter - x),
             -(self.height() - circle_diameter - y)
         )
-
-        # Настройки для обводки
         pen_width = 12
-        bg_pen = QPen(QColor("#404040"), pen_width)  # Цвет фона окружности
-        progress_pen = QPen(QColor("#0078D7"), pen_width)  # Цвет прогресса
+        bg_pen = QPen(QColor("#404040"), pen_width)
+        progress_pen = QPen(QColor("#0078D7"), pen_width)
         progress_pen.setCapStyle(Qt.RoundCap)
 
-        # Рисуем задний круг
         painter.setPen(bg_pen)
         painter.drawEllipse(circle_rect)
 
         if self.current_time > 0:
-            # Вычисляем прогресс
             progress = min(self.current_time / self.max_time, 1.0)
             angle = int(360 * progress)
 
-            # Рисуем прогресс
             painter.setPen(progress_pen)
-            painter.drawArc(circle_rect, 90 * 16, -angle * 16)  # От 90 градусов, и с углом по часовой стрелке
+            painter.drawArc(circle_rect, 90 * 16, -angle * 16)
 
-        # Рисуем текст в центре круга
         label_x = circle_rect.center().x() - self.time_label.width() // 2
         label_y = circle_rect.center().y() - self.time_label.height() // 2
         self.time_label.move(label_x, label_y)

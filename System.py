@@ -36,7 +36,6 @@ class Central(QObject):
         self.initialize_ui()
 
     def initialize_ui(self):
-        """Инициализация пользовательского интерфейса"""
         self.window.setWindowFlags(Qt.FramelessWindowHint)
         self.window.resize(self.size[0], self.size[1])
         self.window.setStyleSheet("background-color: #081436")
@@ -81,7 +80,6 @@ class Central(QObject):
             date = self.date
         else:
             self.date = date
-        """Показать таблицу задач для выбранной даты"""
         self.table_wind = QWidget()
         self.table_wind.installEventFilter(self)
         self.table_wind.setWindowTitle(f"{date.toString('dd.MM.yyyy')} — Таблица задач")
@@ -176,7 +174,6 @@ class Central(QObject):
             table = self.table_wind.findChild(TaskTable)
 
             if table:
-                # Проверка суммы часов
                 total_hours = 0.0
                 valid = True
 
@@ -196,12 +193,11 @@ class Central(QObject):
                     return
                 elif not math.isclose(total_hours, 24.0, rel_tol=0.01):
                     QMessageBox.warning(self.table_wind, "Ошибка",
-                                        f"Сумма времени должна быть 24 часа!\nТекущая сумма: {total_hours:.2f}")
+                                        f"Сумма времени должна быть 24 часа!\nОсталось добавить: {24.0 - total_hours:.2f}")
                     return
 
                 save_table_data(table, selected_date)
 
-            # Закрываем окно безопасно
             if hasattr(self, 'table_wind') and self.table_wind:
                 self.table_wind.deleteLater()
                 self.table_wind = None
@@ -210,7 +206,6 @@ class Central(QObject):
             print(f"Ошибка при закрытии: {str(e)}")
 
     def clear_table(self):
-        """Очистить таблицу, оставляя только одну пустую строку"""
         reply = QMessageBox.question(self.table_wind, 'Подтверждение очистки',
                                      "Вы уверены, что хотите полностью очистить таблицу задач?\n"
                                      "Все строки будут удалены, останется только одна пустая строка.",
@@ -219,20 +214,15 @@ class Central(QObject):
         if reply == QMessageBox.Yes:
             table = self.table_wind.findChild(TaskTable)
             if table:
-                # Сохраняем дату для обновления
                 selected_date = self.calendar.selectedDate().toString("yyyy-MM-dd")
 
-                # Очищаем данные в базе данных
                 self.clear_data_from_db(selected_date)
 
-                # Полностью очищаем таблицу
-                table.setRowCount(0)  # Удаляем все строки
+                table.setRowCount(0)
 
-                # Добавляем одну пустую строку
                 table.setRowCount(1)
                 table.fill_empty_cells()
 
-                # Закрываем и заново открываем таблицу для обновления
                 self.close_table()
                 self.show_time_table(self.calendar.selectedDate())
 
@@ -240,7 +230,6 @@ class Central(QObject):
                                         'Все строки удалены, оставлена одна пустая строка!')
 
     def clear_data_from_db(self, date_str):
-        """Очистить данные таблицы в базе данных по указанной дате"""
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
 
@@ -250,7 +239,6 @@ class Central(QObject):
         conn.close()
 
     def transfer_tasks(self):
-        """Перенос задач на следующий день (без удаления из исходной таблицы)"""
         selected_date = self.calendar.selectedDate().toString("yyyy-MM-dd")
 
         reply = QMessageBox.question(
@@ -264,12 +252,10 @@ class Central(QObject):
 
         if reply == QMessageBox.Yes:
             try:
-                # Сохраняем текущие данные перед переносом
                 table = self.table_wind.findChild(TaskTable)
                 if table:
                     save_table_data(table, selected_date)
 
-                # Выполняем перенос (без удаления)
                 from database import transfer_unfinished_tasks
                 if transfer_unfinished_tasks(selected_date):
 
@@ -326,13 +312,11 @@ class Central(QObject):
         chart.setTitle(f"Распределение времени за {date}")
         chart.setAnimationOptions(QChart.SeriesAnimations)
 
-        # Стилизация графика
         chart.setBackgroundBrush(QBrush(QColor("#081436")))
         chart.setPlotAreaBackgroundBrush(QBrush(QColor("#081436")))
         chart.setPlotAreaBackgroundVisible(True)
         chart.setTitleBrush(QBrush(Qt.white))
 
-        # Ось X
         axis_x = QBarCategoryAxis()
         axis_x.append(labels)
         axis_x.setLabelsBrush(QBrush(Qt.white))
@@ -341,7 +325,6 @@ class Central(QObject):
         chart.addAxis(axis_x, Qt.AlignBottom)
         series.attachAxis(axis_x)
 
-        # Ось Y
         axis_y = QValueAxis()
         axis_y.setRange(0, max(values) + 2)
         axis_y.setLabelsBrush(QBrush(Qt.white))
@@ -360,7 +343,6 @@ class Central(QObject):
         dialog.exec_()
 
     def eventFilter(self, obj, event):
-        """Обработка событий клавиатуры"""
         if event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape:
             if obj == self.window:
                 self.window.close()
